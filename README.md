@@ -1,0 +1,77 @@
+# kkueinput
+
+IME input helper for CLI programs that don't support input method composition display (e.g. Claude CLI, Node.js readline in raw mode).
+
+## Problem
+
+Programs using raw terminal mode intercept individual keystrokes, preventing the IME from showing the composition process. For Korean input, you can't see the syllable being built (ㅎ → 하 → 한) — the characters appear only after composition is complete, or not at all.
+
+## Solution
+
+A minimal GTK3 floating input window that:
+
+1. Provides a standard text entry with full IME support
+2. On **Enter**, injects the composed text directly into the controlling terminal via `TIOCSTI` ioctl
+3. The target CLI program receives the text as if it were typed on the keyboard
+
+## Requirements
+
+- Linux with X11 (Wayland not supported)
+- GTK3 (`libgtk-3-dev`)
+- Kernel < 6.2 (TIOCSTI disabled on 6.2+)
+
+## Build
+
+```sh
+sudo apt install libgtk-3-dev   # one-time
+make
+```
+
+## Usage
+
+```sh
+# Launch in background, then use your CLI program
+./kkueinput &
+
+# Or launch together with a CLI program
+./kkueinput & claude
+```
+
+Type in the floating input window, press Enter to send. The text is injected into the terminal where `kkueinput` was launched.
+
+## Keyboard Shortcuts
+
+| Key         | Action       |
+|-------------|--------------|
+| Enter       | Send text    |
+| Ctrl+X      | Close        |
+| F11         | Shrink width |
+| F12         | Grow width   |
+
+## Mouse (icon area)
+
+| Action      | Function        |
+|-------------|-----------------|
+| Left drag   | Move window     |
+| Right click | Context menu    |
+
+## How It Works
+
+- **GTK3 GtkEntry** handles IME composition with full visual feedback
+- **TIOCSTI ioctl** pushes each byte of the composed UTF-8 text into the terminal's input queue
+- The text is sent to `/dev/tty` (the controlling terminal of the kkueinput process), so it reaches whatever program is running in that terminal
+- `\r` is appended to simulate Enter (works in both raw and cooked mode)
+
+## Why GTK3 instead of GTK4?
+
+GTK4 + fcitx5-frontend-gtk4 (v5.0.12) has a [known bug](https://gitlab.gnome.org/GNOME/gtk/-/issues/4679) where space during Korean composition is inserted at the wrong position. GTK3 does not have this issue.
+
+## Limitations
+
+- **TIOCSTI** is disabled on Linux 6.2+ kernels (`CONFIG_LEGACY_TIOCSTI`). A future version may use an alternative injection method.
+- Only works on the terminal where `kkueinput` was launched (controlling terminal).
+- X11 only — Wayland compositors don't support the transparent/always-on-top window hints the same way.
+
+## License
+
+MIT
