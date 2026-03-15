@@ -72,6 +72,48 @@ GTK4 + fcitx5-frontend-gtk4 (v5.0.12) has a [known bug](https://gitlab.gnome.org
 - Only works on the terminal where `kkueinput` was launched (controlling terminal).
 - X11 only — Wayland compositors don't support the transparent/always-on-top window hints the same way.
 
+## Roadmap: Kernel 6.2+ Support
+
+TIOCSTI is disabled on Linux 6.2+ (`CONFIG_LEGACY_TIOCSTI`). Three alternative approaches are under consideration:
+
+### Option A: forkpty (Recommended)
+
+kkueinput spawns a PTY and runs the target CLI inside it:
+
+```sh
+./kkueinput claude    # kkueinput creates PTY, launches claude inside
+```
+
+- Writes to the PTY master fd → appears as keyboard input to the child process
+- Kernel version independent — standard POSIX pty API
+- Requires embedding a terminal emulator (VTE) or raw PTY I/O forwarding
+- Changes the launch model from background helper to wrapper
+
+### Option B: tmux send-keys
+
+Delegate input injection to tmux, which owns the PTY master:
+
+```sh
+tmux new-session -d -s work 'claude'
+./kkueinput --tmux work
+```
+
+- `tmux send-keys -t <session> "<text>" Enter`
+- Simple, no low-level PTY work needed
+- Requires tmux as a runtime dependency
+
+### Option C: Write to /proc/PID/fd/0
+
+Write directly to the target process's stdin fd:
+
+- Works in cooked mode (shell prompt)
+- Does **not** work in raw mode (Claude CLI, vim, etc.) — bytes go to stdout side
+- Not a viable general solution
+
+### Decision
+
+Option A (forkpty) is the most robust path forward. It removes the TIOCSTI dependency entirely and works on any kernel. The trade-off is increased complexity and a change from `./kkueinput &` to `./kkueinput <command>`.
+
 ## License
 
 MIT
