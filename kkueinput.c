@@ -137,9 +137,12 @@ show_about (GtkWidget *parent)
     gtk_show_about_dialog (GTK_WINDOW (parent),
                            "program-name", "kkueinput",
                            "comments", "IME input helper for CLI programs.\n"
-                                       "Injects composed text into the "
-                                       "controlling terminal via TIOCSTI "
+                                       "Injects composed text via TIOCSTI "
                                        "or tmux send-keys.\n"
+                                       "\n"
+                                       "── Usage ─────────────\n"
+                                       "kkueinput &\n"
+                                       "kkueinput --tmux=SESSION\n"
                                        "\n"
                                        "── Keys ──────────────\n"
                                        "Enter ···········  Send\n"
