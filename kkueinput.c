@@ -29,7 +29,13 @@ typedef struct {
     Backend    backend;
     int        tty_fd;       /* TIOCSTI용 */
     char      *tmux_target;  /* tmux 세션 이름 */
-    GtkWidget *entry;
+    gboolean   multiline;    /* 멀티라인 모드 여부 */
+    GtkWidget *entry;        /* GtkEntry (싱글라인) */
+    GtkWidget *textview;     /* GtkTextView (멀티라인) */
+    GtkWidget *scroll;       /* GtkScrolledWindow */
+    GtkWidget *toggle_btn;   /* +/- 토글 버튼 */
+    GtkWidget *grip;         /* 멀티라인용 드래그/메뉴 핸들 */
+    GtkWidget *multi_box;    /* 멀티라인 컨테이너 */
     GtkWidget *window;
 } AppState;
 
@@ -88,12 +94,25 @@ static gboolean
 flush_idle (gpointer user_data)
 {
     AppState *state = user_data;
-    GtkEntryBuffer *buf = gtk_entry_get_buffer (GTK_ENTRY (state->entry));
-    const char *text = gtk_entry_buffer_get_text (buf);
 
-    if (text[0] != '\0') {
-        send_text (state, text);
-        gtk_entry_buffer_set_text (buf, "", 0);
+    if (state->multiline) {
+        GtkTextBuffer *buf = gtk_text_view_get_buffer (
+                                 GTK_TEXT_VIEW (state->textview));
+        GtkTextIter start, end;
+        gtk_text_buffer_get_bounds (buf, &start, &end);
+        char *text = gtk_text_buffer_get_text (buf, &start, &end, FALSE);
+        if (text[0] != '\0') {
+            send_text (state, text);
+            gtk_text_buffer_set_text (buf, "", 0);
+        }
+        g_free (text);
+    } else {
+        GtkEntryBuffer *buf = gtk_entry_get_buffer (GTK_ENTRY (state->entry));
+        const char *text = gtk_entry_buffer_get_text (buf);
+        if (text[0] != '\0') {
+            send_text (state, text);
+            gtk_entry_buffer_set_text (buf, "", 0);
+        }
     }
 
     return G_SOURCE_REMOVE;
@@ -114,8 +133,13 @@ on_key_press (GtkWidget   *widget G_GNUC_UNUSED,
 
     if (event->keyval == GDK_KEY_Return ||
         event->keyval == GDK_KEY_KP_Enter) {
+        if (state->multiline) {
+            /* 멀티라인: Ctrl+Enter → 전송, Enter → 줄바꿈 */
+            if (!(event->state & GDK_CONTROL_MASK))
+                return FALSE;
+        }
         g_timeout_add (50, flush_idle, state);
-        return FALSE;
+        return TRUE;
     }
 
     /* F11/F12: 폭 조절 */
@@ -145,13 +169,17 @@ show_about (GtkWidget *parent)
                                        "kkueinput --tmux=SESSION\n"
                                        "\n"
                                        "── Keys ──────────────\n"
-                                       "Enter ···········  Send\n"
+                                       "Enter ···········  Send (single)\n"
+                                       "Ctrl+Enter ····  Send (multi)\n"
                                        "Ctrl+X ·········  Close\n"
                                        "F11 / F12 ···  −/+ Width\n"
                                        "\n"
-                                       "── Mouse (icon) ──────\n"
+                                       "── Mouse (⌨ icon) ────\n"
                                        "Left drag ······  Move\n"
-                                       "Right click ····  Menu",
+                                       "Right click ····  Menu\n"
+                                       "\n"
+                                       "── Mouse (⊕/⊖ icon) ──\n"
+                                       "Left click ·····  Toggle",
                            "logo-icon-name", "input-keyboard",
                            "website", "mailto:kkuepark@gmail.com",
                            "website-label", "kkuepark@gmail.com",
@@ -159,25 +187,11 @@ show_about (GtkWidget *parent)
                            NULL);
 }
 
-/* 아이콘 클릭: 좌클릭 → 드래그, 우클릭 → 메뉴 */
+static void toggle_multiline (GtkButton *btn, gpointer user_data);
+
 static void
-on_icon_press (GtkEntry             *entry    G_GNUC_UNUSED,
-               GtkEntryIconPosition  pos      G_GNUC_UNUSED,
-               GdkEvent             *event,
-               gpointer              user_data)
+show_popup_menu (AppState *state, GdkEvent *event)
 {
-    AppState *state = user_data;
-    GdkEventButton *btn = (GdkEventButton *) event;
-
-    if (btn->button == 1) {
-        gtk_window_begin_move_drag (GTK_WINDOW (state->window),
-                                    btn->button,
-                                    (gint) btn->x_root,
-                                    (gint) btn->y_root,
-                                    btn->time);
-        return;
-    }
-
     GtkWidget *menu = gtk_menu_new ();
 
     GtkWidget *item_close = gtk_menu_item_new_with_label ("Close  Ctrl+X");
@@ -192,6 +206,117 @@ on_icon_press (GtkEntry             *entry    G_GNUC_UNUSED,
 
     gtk_widget_show_all (menu);
     gtk_menu_popup_at_pointer (GTK_MENU (menu), event);
+}
+
+static void
+on_icon_press (GtkEntry             *entry    G_GNUC_UNUSED,
+               GtkEntryIconPosition  pos,
+               GdkEvent             *event,
+               gpointer              user_data)
+{
+    AppState *state = user_data;
+    GdkEventButton *btn = (GdkEventButton *) event;
+
+    /* SECONDARY (우) = 확장 토글 */
+    if (pos == GTK_ENTRY_ICON_SECONDARY) {
+        toggle_multiline (NULL, state);
+        return;
+    }
+
+    /* PRIMARY (좌): 좌클릭 → 드래그, 우클릭 → 메뉴 */
+    if (btn->button == 1) {
+        gtk_window_begin_move_drag (GTK_WINDOW (state->window),
+                                    btn->button,
+                                    (gint) btn->x_root,
+                                    (gint) btn->y_root,
+                                    btn->time);
+        return;
+    }
+
+    show_popup_menu (state, event);
+}
+
+/* 축소 버튼 클릭 */
+static gboolean
+on_toggle_press (GtkWidget      *widget G_GNUC_UNUSED,
+                 GdkEventButton *event  G_GNUC_UNUSED,
+                 gpointer        user_data)
+{
+    toggle_multiline (NULL, user_data);
+    return TRUE;
+}
+
+/* 멀티라인용 grip: 좌드래그 → 이동, 우클릭 → 메뉴 */
+static gboolean
+on_grip_press (GtkWidget *widget G_GNUC_UNUSED,
+               GdkEventButton *event,
+               gpointer        user_data)
+{
+    AppState *state = user_data;
+
+    if (event->button == 1) {
+        gtk_window_begin_move_drag (GTK_WINDOW (state->window),
+                                    event->button,
+                                    (gint) event->x_root,
+                                    (gint) event->y_root,
+                                    event->time);
+        return TRUE;
+    }
+
+    if (event->button == 3) {
+        show_popup_menu (state, (GdkEvent *) event);
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+static void
+toggle_multiline (GtkButton *btn G_GNUC_UNUSED, gpointer user_data)
+{
+    AppState *state = user_data;
+
+    int w, h;
+    gtk_window_get_size (GTK_WINDOW (state->window), &w, &h);
+
+    if (!state->multiline) {
+        /* 싱글 → 멀티: 텍스트 이전 */
+        const char *text = gtk_entry_buffer_get_text (
+                               gtk_entry_get_buffer (GTK_ENTRY (state->entry)));
+        GtkTextBuffer *buf = gtk_text_view_get_buffer (
+                                 GTK_TEXT_VIEW (state->textview));
+        gtk_text_buffer_set_text (buf, text, -1);
+
+        gtk_entry_set_icon_from_icon_name (GTK_ENTRY (state->entry),
+                                           GTK_ENTRY_ICON_SECONDARY,
+                                           "list-remove-symbolic");
+        gtk_widget_hide (state->entry);
+        gtk_widget_show_all (state->multi_box);
+        gtk_window_set_resizable (GTK_WINDOW (state->window), TRUE);
+        gtk_window_resize (GTK_WINDOW (state->window), w, 140);
+        state->multiline = TRUE;
+        gtk_widget_grab_focus (state->textview);
+    } else {
+        /* 멀티 → 싱글: 텍스트 이전 (첫 줄만) */
+        GtkTextBuffer *buf = gtk_text_view_get_buffer (
+                                 GTK_TEXT_VIEW (state->textview));
+        GtkTextIter start, end;
+        gtk_text_buffer_get_bounds (buf, &start, &end);
+        char *text = gtk_text_buffer_get_text (buf, &start, &end, FALSE);
+        gtk_entry_buffer_set_text (
+            gtk_entry_get_buffer (GTK_ENTRY (state->entry)), text, -1);
+        g_free (text);
+
+        gtk_entry_set_icon_from_icon_name (GTK_ENTRY (state->entry),
+                                           GTK_ENTRY_ICON_SECONDARY,
+                                           "list-add-symbolic");
+        gtk_widget_hide (state->multi_box);
+        gtk_widget_show (state->entry);
+        gtk_window_set_resizable (GTK_WINDOW (state->window), FALSE);
+        gtk_window_resize (GTK_WINDOW (state->window), w, 1);
+        state->multiline = FALSE;
+        gtk_widget_grab_focus (state->entry);
+    }
 }
 
 static void
@@ -230,7 +355,17 @@ app_activate (GtkApplication *app, gpointer user_data)
         "box { background-color: transparent; }"
         "entry { background-color: rgba(30, 30, 30, 0.75);"
         "        color: #ffffff;"
-        "        border: 1px solid rgba(100, 100, 100, 0.4); }",
+        "        border: 1px solid rgba(100, 100, 100, 0.4); }"
+        "textview { background-color: transparent; }"
+        "textview text { background-color: rgba(30, 30, 30, 0.75);"
+        "        color: #ffffff;"
+        "        caret-color: #ffffff; }"
+        "scrolledwindow { background-color: transparent;"
+        "        border: none; }"
+        ".multiline-box { background-color: rgba(30, 30, 30, 0.75);"
+        "        border: 1px solid rgba(100, 100, 100, 0.4);"
+        "        border-radius: 3px;"
+        "        padding: 2px; }",
         -1, NULL);
     gtk_style_context_add_provider_for_screen (
         gdk_screen_get_default (),
@@ -242,10 +377,12 @@ app_activate (GtkApplication *app, gpointer user_data)
     gtk_container_set_border_width (GTK_CONTAINER (box), 8);
     gtk_container_add (GTK_CONTAINER (state->window), box);
 
-    /* 입력 필드 */
-    state->entry = gtk_entry_new ();
+    /* 입력 영역: [입력위젯][+/- 버튼] */
+    GtkWidget *input_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_box_pack_start (GTK_BOX (box), input_box, TRUE, TRUE, 0);
 
-    /* placeholder에 백엔드 표시 */
+    /* GtkEntry (싱글라인, 기본) */
+    state->entry = gtk_entry_new ();
     if (state->backend == BACKEND_TMUX) {
         char ph[128];
         g_snprintf (ph, sizeof (ph), "→ tmux:%s", state->tmux_target);
@@ -253,21 +390,68 @@ app_activate (GtkApplication *app, gpointer user_data)
     } else {
         gtk_entry_set_placeholder_text (GTK_ENTRY (state->entry), "Type and Enter");
     }
-
     gtk_entry_set_icon_from_icon_name (GTK_ENTRY (state->entry),
-                                       GTK_ENTRY_ICON_SECONDARY,
+                                       GTK_ENTRY_ICON_PRIMARY,
                                        "input-keyboard-symbolic");
     gtk_entry_set_icon_tooltip_text (GTK_ENTRY (state->entry),
+                                     GTK_ENTRY_ICON_PRIMARY,
+                                     "Drag / Menu");
+    gtk_entry_set_icon_from_icon_name (GTK_ENTRY (state->entry),
+                                       GTK_ENTRY_ICON_SECONDARY,
+                                       "list-add-symbolic");
+    gtk_entry_set_icon_tooltip_text (GTK_ENTRY (state->entry),
                                      GTK_ENTRY_ICON_SECONDARY,
-                                     "메뉴");
+                                     "Expand");
     g_signal_connect (state->entry, "icon-press",
                       G_CALLBACK (on_icon_press), state);
-    gtk_box_pack_start (GTK_BOX (box), state->entry, FALSE, FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (input_box), state->entry, TRUE, TRUE, 0);
+
+    /* GtkTextView (멀티라인, 숨김) */
+    state->textview = gtk_text_view_new ();
+    gtk_text_view_set_wrap_mode (GTK_TEXT_VIEW (state->textview),
+                                 GTK_WRAP_WORD_CHAR);
+    state->scroll = gtk_scrolled_window_new (NULL, NULL);
+    gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (state->scroll),
+                                    GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_size_request (state->scroll, -1, 120);
+    gtk_container_add (GTK_CONTAINER (state->scroll), state->textview);
+    /* 멀티라인 컨테이너: [grip][scroll][toggle_btn] — entry와 같은 스타일 */
+    state->multi_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget *multi_box = state->multi_box;
+    GtkStyleContext *ctx = gtk_widget_get_style_context (multi_box);
+    gtk_style_context_add_class (ctx, "multiline-box");
+    gtk_box_pack_start (GTK_BOX (input_box), multi_box, TRUE, TRUE, 0);
+
+    state->grip = gtk_event_box_new ();
+    GtkWidget *grip_icon = gtk_image_new_from_icon_name (
+                               "input-keyboard-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_container_add (GTK_CONTAINER (state->grip), grip_icon);
+    gtk_widget_set_valign (state->grip, GTK_ALIGN_START);
+    gtk_widget_set_tooltip_text (state->grip, "Drag / Menu");
+    g_signal_connect (state->grip, "button-press-event",
+                      G_CALLBACK (on_grip_press), state);
+    gtk_box_pack_start (GTK_BOX (multi_box), state->grip, FALSE, FALSE, 0);
+
+    gtk_box_pack_start (GTK_BOX (multi_box), state->scroll, TRUE, TRUE, 0);
+
+    state->toggle_btn = gtk_event_box_new ();
+    GtkWidget *toggle_icon = gtk_image_new_from_icon_name (
+                                 "list-remove-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_container_add (GTK_CONTAINER (state->toggle_btn), toggle_icon);
+    gtk_widget_set_valign (state->toggle_btn, GTK_ALIGN_START);
+    gtk_widget_set_tooltip_text (state->toggle_btn, "Collapse");
+    g_signal_connect (state->toggle_btn, "button-press-event",
+                      G_CALLBACK (on_toggle_press), state);
+    gtk_box_pack_start (GTK_BOX (multi_box), state->toggle_btn,
+                        FALSE, FALSE, 0);
 
     g_signal_connect (state->window, "key-press-event",
                       G_CALLBACK (on_key_press), state);
 
     gtk_widget_show_all (state->window);
+
+    /* 멀티라인 컨테이너는 초기에 숨김 (show_all로 자식까지 realize된 후) */
+    gtk_widget_hide (state->multi_box);
 }
 
 static void

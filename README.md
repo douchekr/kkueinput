@@ -43,19 +43,28 @@ Type in the floating input window, press Enter to send. Run without arguments to
 
 ## Keyboard Shortcuts
 
-| Key         | Action       |
-|-------------|--------------|
-| Enter       | Send text    |
-| Ctrl+X      | Close        |
-| F11         | Shrink width |
-| F12         | Grow width   |
+| Key         | Action                      |
+|-------------|-----------------------------|
+| Enter       | Send text (single-line)     |
+| Ctrl+Enter  | Send text (multi-line)      |
+| Ctrl+X      | Close                       |
+| F11         | Shrink width                |
+| F12         | Grow width                  |
 
-## Mouse (icon area)
+## Mouse
+
+### ⌨ Icon (left side)
 
 | Action      | Function        |
 |-------------|-----------------|
 | Left drag   | Move window     |
 | Right click | Context menu    |
+
+### ⊕/⊖ Icon (right side)
+
+| Action      | Function              |
+|-------------|-----------------------|
+| Left click  | Toggle multi-line     |
 
 ## How It Works
 
