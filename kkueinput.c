@@ -5,12 +5,12 @@
  * GTK3 입력창에서 조합 → 터미널에 텍스트 주입.
  *
  * 백엔드:
- *   (기본)      TIOCSTI — /dev/tty에 직접 주입 (커널 < 6.2)
- *   --tmux=NAME tmux send-keys — 원격/로컬 tmux 세션에 주입
+ *   --tty        TIOCSTI — /dev/tty에 직접 주입 (커널 < 6.2)
+ *   --tmux=NAME  tmux send-keys — 원격/로컬 tmux 세션에 주입
  *
  * 사용법:
- *   ./kkueinput &                  # TIOCSTI (로컬)
- *   ./kkueinput --tmux=mysession   # tmux 세션에 전송
+ *   ./kkueinput --tty &              # TIOCSTI (로컬)
+ *   ./kkueinput --tmux=mysession     # tmux 세션에 전송
  */
 
 #include <gtk/gtk.h>
@@ -141,7 +141,7 @@ show_about (GtkWidget *parent)
                                        "or tmux send-keys.\n"
                                        "\n"
                                        "── Usage ─────────────\n"
-                                       "kkueinput &\n"
+                                       "kkueinput --tty &\n"
                                        "kkueinput --tmux=SESSION\n"
                                        "\n"
                                        "── Keys ──────────────\n"
@@ -273,9 +273,10 @@ app_activate (GtkApplication *app, gpointer user_data)
 static void
 print_usage (const char *prog)
 {
-    g_printerr ("Usage: %s [--tmux=SESSION]\n"
+    g_printerr ("Usage: %s <backend>\n"
                 "\n"
-                "  (no args)        TIOCSTI mode (inject into controlling tty)\n"
+                "Backends (required, choose one):\n"
+                "  --tty            TIOCSTI mode (inject into controlling tty)\n"
                 "  --tmux=SESSION   tmux mode (send-keys to named session)\n",
                 prog);
 }
@@ -285,12 +286,21 @@ main (int argc, char *argv[])
 {
     static AppState state = { .backend = BACKEND_TIOCSTI, .tty_fd = -1 };
 
-    /* --tmux=SESSION 파싱 */
+    /* 인자 파싱 */
+    gboolean backend_set = FALSE;
+
     for (int i = 1; i < argc; i++) {
-        if (g_str_has_prefix (argv[i], "--tmux=")) {
+        if (g_str_equal (argv[i], "--tty")) {
+            state.backend = BACKEND_TIOCSTI;
+            backend_set = TRUE;
+            for (int j = i; j < argc - 1; j++)
+                argv[j] = argv[j + 1];
+            argc--;
+            i--;
+        } else if (g_str_has_prefix (argv[i], "--tmux=")) {
             state.backend = BACKEND_TMUX;
             state.tmux_target = argv[i] + 7;
-            /* GtkApplication이 이 인자를 먹지 않게 제거 */
+            backend_set = TRUE;
             for (int j = i; j < argc - 1; j++)
                 argv[j] = argv[j + 1];
             argc--;
@@ -300,6 +310,11 @@ main (int argc, char *argv[])
             print_usage (argv[0]);
             return 0;
         }
+    }
+
+    if (!backend_set) {
+        print_usage (argv[0]);
+        return 1;
     }
 
     if (state.backend == BACKEND_TIOCSTI) {

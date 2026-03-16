@@ -18,7 +18,8 @@ A minimal GTK3 floating input window that:
 
 - Linux with X11 (Wayland not supported)
 - GTK3 (`libgtk-3-dev`)
-- Kernel < 6.2 (TIOCSTI disabled on 6.2+)
+- Kernel < 6.2 for `--tty` mode (TIOCSTI disabled on 6.2+)
+- tmux for `--tmux` mode (works on any kernel)
 
 ## Build
 
@@ -30,14 +31,15 @@ make
 ## Usage
 
 ```sh
-# Launch in background, then use your CLI program
-./kkueinput &
+# TIOCSTI mode — inject into controlling tty (kernel < 6.2)
+./kkueinput --tty &
 
-# Or launch together with a CLI program
-./kkueinput & claude
+# tmux mode — send-keys to a named tmux session (any kernel)
+tmux new-session -d -s work 'claude'
+./kkueinput --tmux=work
 ```
 
-Type in the floating input window, press Enter to send. The text is injected into the terminal where `kkueinput` was launched.
+Type in the floating input window, press Enter to send. Run without arguments to see help.
 
 ## Keyboard Shortcuts
 
@@ -68,8 +70,8 @@ GTK4 + fcitx5-frontend-gtk4 (v5.0.12) has a [known bug](https://gitlab.gnome.org
 
 ## Limitations
 
-- **TIOCSTI** is disabled on Linux 6.2+ kernels (`CONFIG_LEGACY_TIOCSTI`). A future version may use an alternative injection method.
-- Only works on the terminal where `kkueinput` was launched (controlling terminal).
+- **`--tty` mode**: TIOCSTI is disabled on Linux 6.2+ kernels (`CONFIG_LEGACY_TIOCSTI`). Use `--tmux` mode on 6.2+.
+- **`--tty` mode**: Only works on the terminal where `kkueinput` was launched (controlling terminal).
 - X11 only — Wayland compositors don't support the transparent/always-on-top window hints the same way.
 
 ## Roadmap: Kernel 6.2+ Support
@@ -89,13 +91,13 @@ kkueinput spawns a PTY and runs the target CLI inside it:
 - Requires embedding a terminal emulator (VTE) or raw PTY I/O forwarding
 - Changes the launch model from background helper to wrapper
 
-### Option B: tmux send-keys
+### Option B: tmux send-keys ✅ Implemented
 
 Delegate input injection to tmux, which owns the PTY master:
 
 ```sh
 tmux new-session -d -s work 'claude'
-./kkueinput --tmux work
+./kkueinput --tmux=work
 ```
 
 - `tmux send-keys -t <session> "<text>" Enter`
