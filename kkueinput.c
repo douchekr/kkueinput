@@ -39,7 +39,11 @@ typedef struct {
     GtkWidget *grip;         /* 멀티라인용 드래그/메뉴 핸들 */
     GtkWidget *multi_box;    /* 멀티라인 컨테이너 */
     GtkWidget *window;
+    int        font_size;   /* 폰트 크기 (pt) */
+    GtkCssProvider *css;    /* 동적 CSS */
 } AppState;
+
+static void apply_css (AppState *state);
 
 /* TIOCSTI로 텍스트 주입 */
 static void
@@ -155,8 +159,17 @@ on_key_press (GtkWidget   *widget G_GNUC_UNUSED,
         return TRUE;
     }
 
+    /* F5/F6: 폰트 크기 조절 */
+    if (event->keyval == GDK_KEY_F5 || event->keyval == GDK_KEY_F6) {
+        state->font_size += (event->keyval == GDK_KEY_F5) ? -1 : 1;
+        if (state->font_size < 6) state->font_size = 6;
+        if (state->font_size > 48) state->font_size = 48;
+        apply_css (state);
+        return TRUE;
+    }
+
     /* F11/F12: 폭 조절 */
-    if (event->keyval == GDK_KEY_F12 || event->keyval == GDK_KEY_F11) {
+    if (event->keyval == GDK_KEY_F11 || event->keyval == GDK_KEY_F12) {
         int w, h;
         gtk_window_get_size (GTK_WINDOW (state->window), &w, &h);
         w += (event->keyval == GDK_KEY_F12) ? 40 : -40;
@@ -186,6 +199,7 @@ show_about (GtkWidget *parent)
                                        "Enter ···········  Send (single)\n"
                                        "Ctrl+Enter ····  Send (multi)\n"
                                        "Ctrl+X ·········  Close\n"
+                                       "F5 / F6 ·······  −/+ Font\n"
                                        "F11 / F12 ···  −/+ Width\n"
                                        "\n"
                                        "── Mouse (⌨ icon) ────\n"
@@ -309,6 +323,7 @@ toggle_multiline (GtkButton *btn G_GNUC_UNUSED, gpointer user_data)
         gtk_window_set_resizable (GTK_WINDOW (state->window), TRUE);
         gtk_window_resize (GTK_WINDOW (state->window), w, 140);
         state->multiline = TRUE;
+        apply_css (state);
         gtk_widget_grab_focus (state->textview);
     } else {
         /* 멀티 → 싱글: 텍스트 이전 (첫 줄만) */
@@ -331,6 +346,37 @@ toggle_multiline (GtkButton *btn G_GNUC_UNUSED, gpointer user_data)
         state->multiline = FALSE;
         gtk_widget_grab_focus (state->entry);
     }
+}
+
+static void
+apply_css (AppState *state)
+{
+    char css_str[1024];
+    g_snprintf (css_str, sizeof (css_str),
+        "window { background-color: transparent; }"
+        "box { background-color: transparent; }"
+        "entry { background-color: rgba(30, 30, 30, 0.75);"
+        "        color: #ffffff;"
+        "        font-size: %dpt;"
+        "        border: 1px solid rgba(100, 100, 100, 0.4); }"
+        "textview { background-color: transparent;"
+        "        font-size: %dpt; }"
+        "textview text { background-color: rgba(30, 30, 30, 0.75);"
+        "        color: #ffffff;"
+        "        caret-color: #ffffff; }"
+        "scrolledwindow { background-color: transparent;"
+        "        border: none; }"
+        ".multiline-box { background-color: rgba(30, 30, 30, 0.75);"
+        "        border: 1px solid rgba(100, 100, 100, 0.4);"
+        "        border-radius: 3px;"
+        "        padding: 2px; }",
+        state->font_size, state->font_size);
+    gtk_css_provider_load_from_data (state->css, css_str, -1, NULL);
+
+    if (state->entry)
+        gtk_widget_queue_resize (state->entry);
+    if (state->textview)
+        gtk_widget_queue_resize (state->textview);
 }
 
 static void
@@ -363,29 +409,12 @@ app_activate (GtkApplication *app, gpointer user_data)
     g_signal_connect (state->window, "screen-changed",
                       G_CALLBACK (on_screen_changed), NULL);
 
-    GtkCssProvider *css = gtk_css_provider_new ();
-    gtk_css_provider_load_from_data (css,
-        "window { background-color: transparent; }"
-        "box { background-color: transparent; }"
-        "entry { background-color: rgba(30, 30, 30, 0.75);"
-        "        color: #ffffff;"
-        "        border: 1px solid rgba(100, 100, 100, 0.4); }"
-        "textview { background-color: transparent; }"
-        "textview text { background-color: rgba(30, 30, 30, 0.75);"
-        "        color: #ffffff;"
-        "        caret-color: #ffffff; }"
-        "scrolledwindow { background-color: transparent;"
-        "        border: none; }"
-        ".multiline-box { background-color: rgba(30, 30, 30, 0.75);"
-        "        border: 1px solid rgba(100, 100, 100, 0.4);"
-        "        border-radius: 3px;"
-        "        padding: 2px; }",
-        -1, NULL);
+    state->css = gtk_css_provider_new ();
+    apply_css (state);
     gtk_style_context_add_provider_for_screen (
         gdk_screen_get_default (),
-        GTK_STYLE_PROVIDER (css),
+        GTK_STYLE_PROVIDER (state->css),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_object_unref (css);
 
     GtkWidget *box = gtk_box_new (GTK_ORIENTATION_VERTICAL, 4);
     gtk_container_set_border_width (GTK_CONTAINER (box), 8);
@@ -465,6 +494,8 @@ app_activate (GtkApplication *app, gpointer user_data)
 
     g_signal_connect (state->window, "key-press-event",
                       G_CALLBACK (on_key_press), state);
+    g_signal_connect (state->textview, "key-press-event",
+                      G_CALLBACK (on_key_press), state);
 
     gtk_widget_show_all (state->window);
 
@@ -489,7 +520,8 @@ print_usage (const char *prog)
 int
 main (int argc, char *argv[])
 {
-    static AppState state = { .backend = BACKEND_TIOCSTI, .tty_fd = -1 };
+    static AppState state = { .backend = BACKEND_TIOCSTI, .tty_fd = -1,
+                               .font_size = 11 };
 
     /* 인자 파싱 */
     gboolean backend_set = FALSE;

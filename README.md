@@ -52,6 +52,8 @@ Type in the floating input window, press Enter to send. Run without arguments to
 | Enter       | Send text (single-line)     |
 | Ctrl+Enter  | Send text (multi-line)      |
 | Ctrl+X      | Close                       |
+| F5          | Shrink font                 |
+| F6          | Grow font                   |
 | F11         | Shrink width                |
 | F12         | Grow width                  |
 
