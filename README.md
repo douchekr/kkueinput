@@ -37,6 +37,10 @@ make
 # tmux mode — send-keys to a named tmux session (any kernel)
 tmux new-session -d -s work 'claude'
 ./kkueinput --tmux=work
+
+# remote tmux via SSH (uses ~/.ssh/config aliases)
+./kkueinput --ssh=devsvr --tmux=work
+./kkueinput --ssh=user@host --tmux=work
 ```
 
 Type in the floating input window, press Enter to send. Run without arguments to see help.

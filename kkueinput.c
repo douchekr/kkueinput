@@ -10,7 +10,8 @@
  *
  * 사용법:
  *   ./kkueinput --tty &              # TIOCSTI (로컬)
- *   ./kkueinput --tmux=mysession     # tmux 세션에 전송
+ *   ./kkueinput --tmux=mysession     # 로컬 tmux 세션에 전송
+ *   ./kkueinput --ssh=devsvr --tmux=work  # SSH 원격 tmux 세션에 전송
  */
 
 #include <gtk/gtk.h>
@@ -29,6 +30,7 @@ typedef struct {
     Backend    backend;
     int        tty_fd;       /* TIOCSTI용 */
     char      *tmux_target;  /* tmux 세션 이름 */
+    char      *ssh_host;    /* SSH 호스트 (NULL이면 로컬) */
     gboolean   multiline;    /* 멀티라인 모드 여부 */
     GtkWidget *entry;        /* GtkEntry (싱글라인) */
     GtkWidget *textview;     /* GtkTextView (멀티라인) */
@@ -51,23 +53,34 @@ send_tiocsti (int tty_fd, const char *text)
     }
 }
 
-/* tmux send-keys로 텍스트 전송 */
+/* 셸 이스케이프: 싱글쿼트 감싸기 */
 static void
-send_tmux (const char *target, const char *text)
+append_shell_quoted (GString *cmd, const char *s)
 {
-    /* 셸 이스케이프: 싱글쿼트 안에 넣고, 텍스트 내 싱글쿼트만 처리 */
-    GString *cmd = g_string_new ("tmux send-keys -t '");
-    g_string_append (cmd, target);
-    g_string_append (cmd, "' -- '");
-
-    for (const char *p = text; *p; p++) {
+    g_string_append_c (cmd, '\'');
+    for (const char *p = s; *p; p++) {
         if (*p == '\'')
             g_string_append (cmd, "'\\''");
         else
             g_string_append_c (cmd, *p);
     }
+    g_string_append_c (cmd, '\'');
+}
 
-    g_string_append (cmd, "' Enter");
+/* tmux send-keys로 텍스트 전송 (로컬 또는 SSH 경유) */
+static void
+send_tmux (const char *ssh_host, const char *target, const char *text)
+{
+    GString *cmd = g_string_new (NULL);
+
+    if (ssh_host)
+        g_string_append_printf (cmd, "ssh %s ", ssh_host);
+
+    g_string_append (cmd, "tmux send-keys -t ");
+    append_shell_quoted (cmd, target);
+    g_string_append (cmd, " -- ");
+    append_shell_quoted (cmd, text);
+    g_string_append (cmd, " Enter");
 
     int ret = system (cmd->str);
     if (ret != 0)
@@ -85,7 +98,7 @@ send_text (AppState *state, const char *text)
         send_tiocsti (state->tty_fd, "\r");
         break;
     case BACKEND_TMUX:
-        send_tmux (state->tmux_target, text);
+        send_tmux (state->ssh_host, state->tmux_target, text);
         break;
     }
 }
@@ -167,6 +180,7 @@ show_about (GtkWidget *parent)
                                        "── Usage ─────────────\n"
                                        "kkueinput --tty &\n"
                                        "kkueinput --tmux=SESSION\n"
+                                       "kkueinput --ssh=HOST --tmux=S\n"
                                        "\n"
                                        "── Keys ──────────────\n"
                                        "Enter ···········  Send (single)\n"
@@ -384,8 +398,12 @@ app_activate (GtkApplication *app, gpointer user_data)
     /* GtkEntry (싱글라인, 기본) */
     state->entry = gtk_entry_new ();
     if (state->backend == BACKEND_TMUX) {
-        char ph[128];
-        g_snprintf (ph, sizeof (ph), "→ tmux:%s", state->tmux_target);
+        char ph[256];
+        if (state->ssh_host)
+            g_snprintf (ph, sizeof (ph), "→ %s:tmux:%s",
+                        state->ssh_host, state->tmux_target);
+        else
+            g_snprintf (ph, sizeof (ph), "→ tmux:%s", state->tmux_target);
         gtk_entry_set_placeholder_text (GTK_ENTRY (state->entry), ph);
     } else {
         gtk_entry_set_placeholder_text (GTK_ENTRY (state->entry), "Type and Enter");
@@ -461,7 +479,10 @@ print_usage (const char *prog)
                 "\n"
                 "Backends (required, choose one):\n"
                 "  --tty            TIOCSTI mode (inject into controlling tty)\n"
-                "  --tmux=SESSION   tmux mode (send-keys to named session)\n",
+                "  --tmux=SESSION   tmux mode (send-keys to named session)\n"
+                "\n"
+                "Options:\n"
+                "  --ssh=HOST       run tmux via SSH (host or user@host)\n",
                 prog);
 }
 
@@ -485,6 +506,12 @@ main (int argc, char *argv[])
             state.backend = BACKEND_TMUX;
             state.tmux_target = argv[i] + 7;
             backend_set = TRUE;
+            for (int j = i; j < argc - 1; j++)
+                argv[j] = argv[j + 1];
+            argc--;
+            i--;
+        } else if (g_str_has_prefix (argv[i], "--ssh=")) {
+            state.ssh_host = argv[i] + 6;
             for (int j = i; j < argc - 1; j++)
                 argv[j] = argv[j + 1];
             argc--;
