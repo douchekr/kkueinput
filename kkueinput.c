@@ -75,21 +75,26 @@ append_shell_quoted (GString *cmd, const char *s)
 static void
 send_tmux (const char *ssh_host, const char *target, const char *text)
 {
+    GString *remote = g_string_new ("tmux send-keys -t ");
+    append_shell_quoted (remote, target);
+    g_string_append (remote, " -- ");
+    append_shell_quoted (remote, text);
+    g_string_append (remote, " Enter");
+
     GString *cmd = g_string_new (NULL);
 
-    if (ssh_host)
+    if (ssh_host) {
         g_string_append_printf (cmd, "ssh %s ", ssh_host);
-
-    g_string_append (cmd, "tmux send-keys -t ");
-    append_shell_quoted (cmd, target);
-    g_string_append (cmd, " -- ");
-    append_shell_quoted (cmd, text);
-    g_string_append (cmd, " Enter");
+        append_shell_quoted (cmd, remote->str);
+    } else {
+        g_string_append (cmd, remote->str);
+    }
 
     int ret = system (cmd->str);
     if (ret != 0)
         g_printerr ("tmux send-keys 실패 (exit %d)\n", ret);
 
+    g_string_free (remote, TRUE);
     g_string_free (cmd, TRUE);
 }
 
@@ -569,7 +574,7 @@ main (int argc, char *argv[])
     }
 
     GtkApplication *app = gtk_application_new ("com.kkuepark.kkueinput",
-                                               G_APPLICATION_FLAGS_NONE);
+                                               G_APPLICATION_NON_UNIQUE);
     g_signal_connect (app, "activate", G_CALLBACK (app_activate), &state);
 
     int status = g_application_run (G_APPLICATION (app), argc, argv);
