@@ -2,33 +2,17 @@
  * kkueinput - 한글 입력 헬퍼
  *
  * raw mode CLI의 한글 IME 조합 문제 우회.
- * GTK3 입력창에서 조합 → 터미널에 텍스트 주입.
- *
- * 백엔드:
- *   --tty        TIOCSTI — /dev/tty에 직접 주입 (커널 < 6.2)
- *   --tmux=NAME  tmux send-keys — 원격/로컬 tmux 세션에 주입
+ * GTK3 입력창에서 조합 → tmux send-keys로 텍스트 주입.
  *
  * 사용법:
- *   ./kkueinput --tty &              # TIOCSTI (로컬)
- *   ./kkueinput --tmux=mysession     # 로컬 tmux 세션에 전송
+ *   ./kkueinput --tmux=mysession          # 로컬 tmux 세션에 전송
  *   ./kkueinput --ssh=devsvr --tmux=work  # SSH 원격 tmux 세션에 전송
  */
 
 #include <gtk/gtk.h>
-#include <sys/ioctl.h>
 #include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-
-typedef enum {
-    BACKEND_TIOCSTI,
-    BACKEND_TMUX,
-} Backend;
 
 typedef struct {
-    Backend    backend;
-    int        tty_fd;       /* TIOCSTI용 */
     char      *tmux_target;  /* tmux 세션 이름 */
     char      *ssh_host;    /* SSH 호스트 (NULL이면 로컬) */
     gboolean   multiline;    /* 멀티라인 모드 여부 */
@@ -44,18 +28,6 @@ typedef struct {
 } AppState;
 
 static void apply_css (AppState *state);
-
-/* TIOCSTI로 텍스트 주입 */
-static void
-send_tiocsti (int tty_fd, const char *text)
-{
-    for (const char *p = text; *p; p++) {
-        if (ioctl (tty_fd, TIOCSTI, p) < 0) {
-            g_printerr ("TIOCSTI 실패: %s\n", g_strerror (errno));
-            return;
-        }
-    }
-}
 
 /* 셸 이스케이프: 싱글쿼트 감싸기 */
 static void
@@ -101,15 +73,7 @@ send_tmux (const char *ssh_host, const char *target, const char *text)
 static void
 send_text (AppState *state, const char *text)
 {
-    switch (state->backend) {
-    case BACKEND_TIOCSTI:
-        send_tiocsti (state->tty_fd, text);
-        send_tiocsti (state->tty_fd, "\r");
-        break;
-    case BACKEND_TMUX:
-        send_tmux (state->ssh_host, state->tmux_target, text);
-        break;
-    }
+    send_tmux (state->ssh_host, state->tmux_target, text);
 }
 
 static gboolean
@@ -192,11 +156,10 @@ show_about (GtkWidget *parent)
     gtk_show_about_dialog (GTK_WINDOW (parent),
                            "program-name", "kkueinput",
                            "comments", "IME input helper for CLI programs.\n"
-                                       "Injects composed text via TIOCSTI "
-                                       "or tmux send-keys.\n"
+                                       "Injects composed text via "
+                                       "tmux send-keys.\n"
                                        "\n"
                                        "── Usage ─────────────\n"
-                                       "kkueinput --tty &\n"
                                        "kkueinput --tmux=SESSION\n"
                                        "kkueinput --ssh=HOST --tmux=S\n"
                                        "\n"
@@ -431,7 +394,7 @@ app_activate (GtkApplication *app, gpointer user_data)
 
     /* GtkEntry (싱글라인, 기본) */
     state->entry = gtk_entry_new ();
-    if (state->backend == BACKEND_TMUX) {
+    {
         char ph[256];
         if (state->ssh_host)
             g_snprintf (ph, sizeof (ph), "→ %s:tmux:%s",
@@ -439,8 +402,6 @@ app_activate (GtkApplication *app, gpointer user_data)
         else
             g_snprintf (ph, sizeof (ph), "→ tmux:%s", state->tmux_target);
         gtk_entry_set_placeholder_text (GTK_ENTRY (state->entry), ph);
-    } else {
-        gtk_entry_set_placeholder_text (GTK_ENTRY (state->entry), "Type and Enter");
     }
     gtk_entry_set_icon_from_icon_name (GTK_ENTRY (state->entry),
                                        GTK_ENTRY_ICON_PRIMARY,
@@ -511,13 +472,10 @@ app_activate (GtkApplication *app, gpointer user_data)
 static void
 print_usage (const char *prog)
 {
-    g_printerr ("Usage: %s <backend>\n"
+    g_printerr ("Usage: %s --tmux=SESSION [--ssh=HOST]\n"
                 "\n"
-                "Backends (required, choose one):\n"
-                "  --tty            TIOCSTI mode (inject into controlling tty)\n"
-                "  --tmux=SESSION   tmux mode (send-keys to named session)\n"
-                "\n"
-                "Options:\n"
+                "Arguments:\n"
+                "  --tmux=SESSION   tmux session to send keys to (required)\n"
                 "  --ssh=HOST       run tmux via SSH (host or user@host)\n",
                 prog);
 }
@@ -525,24 +483,12 @@ print_usage (const char *prog)
 int
 main (int argc, char *argv[])
 {
-    static AppState state = { .backend = BACKEND_TIOCSTI, .tty_fd = -1,
-                               .font_size = 11 };
+    static AppState state = { .font_size = 11 };
 
     /* 인자 파싱 */
-    gboolean backend_set = FALSE;
-
     for (int i = 1; i < argc; i++) {
-        if (g_str_equal (argv[i], "--tty")) {
-            state.backend = BACKEND_TIOCSTI;
-            backend_set = TRUE;
-            for (int j = i; j < argc - 1; j++)
-                argv[j] = argv[j + 1];
-            argc--;
-            i--;
-        } else if (g_str_has_prefix (argv[i], "--tmux=")) {
-            state.backend = BACKEND_TMUX;
+        if (g_str_has_prefix (argv[i], "--tmux=")) {
             state.tmux_target = argv[i] + 7;
-            backend_set = TRUE;
             for (int j = i; j < argc - 1; j++)
                 argv[j] = argv[j + 1];
             argc--;
@@ -560,17 +506,9 @@ main (int argc, char *argv[])
         }
     }
 
-    if (!backend_set) {
+    if (!state.tmux_target) {
         print_usage (argv[0]);
         return 1;
-    }
-
-    if (state.backend == BACKEND_TIOCSTI) {
-        state.tty_fd = open ("/dev/tty", O_WRONLY);
-        if (state.tty_fd < 0) {
-            g_printerr ("/dev/tty 열기 실패: %s\n", g_strerror (errno));
-            return 1;
-        }
     }
 
     GtkApplication *app = gtk_application_new ("com.kkuepark.kkueinput",
@@ -578,9 +516,6 @@ main (int argc, char *argv[])
     g_signal_connect (app, "activate", G_CALLBACK (app_activate), &state);
 
     int status = g_application_run (G_APPLICATION (app), argc, argv);
-
-    if (state.tty_fd >= 0)
-        close (state.tty_fd);
 
     g_object_unref (app);
     return status;
