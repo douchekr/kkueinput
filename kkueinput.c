@@ -111,7 +111,7 @@ on_key_press (GtkWidget   *widget G_GNUC_UNUSED,
 {
     AppState *state = user_data;
 
-    if (event->keyval == GDK_KEY_x &&
+    if (event->keyval == GDK_KEY_q &&
         (event->state & GDK_CONTROL_MASK)) {
         gtk_window_close (GTK_WINDOW (state->window));
         return TRUE;
@@ -166,7 +166,7 @@ show_about (GtkWidget *parent)
                                        "── Keys ──────────────\n"
                                        "Enter ···········  Send (single)\n"
                                        "Ctrl+Enter ····  Send (multi)\n"
-                                       "Ctrl+X ·········  Close\n"
+                                       "Ctrl+Q ·········  Close\n"
                                        "F5 / F6 ·······  −/+ Font\n"
                                        "F11 / F12 ···  −/+ Width\n"
                                        "\n"
@@ -190,7 +190,7 @@ show_popup_menu (AppState *state, GdkEvent *event)
 {
     GtkWidget *menu = gtk_menu_new ();
 
-    GtkWidget *item_close = gtk_menu_item_new_with_label ("Close  Ctrl+X");
+    GtkWidget *item_close = gtk_menu_item_new_with_label ("Close  Ctrl+Q");
     g_signal_connect_swapped (item_close, "activate",
                               G_CALLBACK (gtk_window_close), state->window);
     gtk_menu_shell_append (GTK_MENU_SHELL (menu), item_close);
