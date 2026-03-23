@@ -25,6 +25,7 @@ typedef struct {
     GtkWidget *window;
     int        font_size;   /* 폰트 크기 (pt) */
     GtkCssProvider *css;    /* 동적 CSS */
+    char      *last_text;   /* 마지막 전송 텍스트 (재전송용) */
 } AppState;
 
 static void apply_css (AppState *state);
@@ -73,7 +74,11 @@ send_tmux (const char *ssh_host, const char *target, const char *text)
 static void
 send_text (AppState *state, const char *text)
 {
-    send_tmux (state->ssh_host, state->tmux_target, text);
+    /* text가 last_text와 같은 포인터일 수 있으므로 먼저 복사 */
+    char *copy = g_strdup (text);
+    g_free (state->last_text);
+    state->last_text = copy;
+    send_tmux (state->ssh_host, state->tmux_target, copy);
 }
 
 static gboolean
@@ -147,6 +152,14 @@ on_key_press (GtkWidget   *widget G_GNUC_UNUSED,
         return TRUE;
     }
 
+    /* Ctrl+R: 재전송 */
+    if (event->keyval == GDK_KEY_r &&
+        (event->state & GDK_CONTROL_MASK)) {
+        if (state->last_text)
+            send_text (state, state->last_text);
+        return TRUE;
+    }
+
     return FALSE;
 }
 
@@ -166,6 +179,7 @@ show_about (GtkWidget *parent)
                                        "── Keys ──────────────\n"
                                        "Enter ···········  Send (single)\n"
                                        "Ctrl+Enter ····  Send (multi)\n"
+                                       "Ctrl+R ·········  Resend\n"
                                        "Ctrl+Q ·········  Close\n"
                                        "F5 / F6 ·······  −/+ Font\n"
                                        "F11 / F12 ···  −/+ Width\n"
