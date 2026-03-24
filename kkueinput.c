@@ -340,7 +340,7 @@ apply_css (AppState *state)
         "entry { background-color: rgba(30, 30, 30, 0.75);"
         "        color: #ffffff;"
         "        font-size: %dpt;"
-        "        border: 1px solid rgba(100, 100, 100, 0.4); }"
+        "        border: 1px solid #55aa55; }"
         "textview { background-color: transparent;"
         "        font-size: %dpt; }"
         "textview text { background-color: rgba(30, 30, 30, 0.75);"
@@ -349,7 +349,7 @@ apply_css (AppState *state)
         "scrolledwindow { background-color: transparent;"
         "        border: none; }"
         ".multiline-box { background-color: rgba(30, 30, 30, 0.75);"
-        "        border: 1px solid rgba(100, 100, 100, 0.4);"
+        "        border: 1px solid #55aa55;"
         "        border-radius: 3px;"
         "        padding: 2px; }",
         state->font_size, state->font_size);
